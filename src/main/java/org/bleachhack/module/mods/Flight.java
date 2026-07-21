@@ -54,10 +54,9 @@ public class Flight extends Module {
 
 			mc.player.setVelocity(0, 0, 0);
 
-			float forward = mc.player.input.movementForward;
-			float strafe = mc.player.input.movementSideways;
-			float up = (mc.player.input.jumping ? 1 : 0) - (mc.player.input.sneaking ? 1 : 0);
-
+			float forward = mc.player.input.getMovementInput().y;
+			float strafe = mc.player.input.getMovementInput().x;
+			float up = (mc.player.input.playerInput.jump() ? 1 : 0) - (mc.player.input.playerInput.sneak() ? 1 : 0);
 			if (forward == 0 && strafe == 0 && up == 0) {
 				return;
 			}
