@@ -1,11 +1,3 @@
-/*
- * This file is part of the BleachHack distribution (https://github.com/BleachDev/BleachHack/).
- * Copyright (c) 2021 Bleach and contributors.
- *
- * This source code is subject to the terms of the GNU General Public
- * License, version 3. If a copy of the GPL was not distributed with this
- * file, You can obtain one at: https://www.gnu.org/licenses/gpl-3.0.txt
- */
 package org.bleachhack.module.mods;
 
 import java.util.Set;
@@ -22,6 +14,8 @@ import com.google.common.collect.Sets;
 
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.PlayerInteractItemC2SPacket;
+import net.minecraft.util.Hand;
 
 public class FastUse extends Module {
 
@@ -33,13 +27,10 @@ public class FastUse extends Module {
 		this(new SettingMode("Mode", "Single", "Multi").withDesc("Whether to throw once per tick or multiple times."));
 	}
 
-	// A visibleWhen(...) predicate can't call an instance method like getSetting(0) - "this" isn't
-	// allowed yet in a super(...) argument list, even inside a lambda. Building the Mode setting as
-	// a constructor parameter first lets the predicate below capture that local variable instead.
 	private FastUse(SettingMode mode) {
 		super("FastUse", KEY_UNBOUND, ModuleCategory.PLAYER, "Allows you to use items faster.",
 				mode,
-				new SettingSlider("Multi", 1, 100, 20, 0).withDesc("How many items to use per tick if on multi mode.")
+				new SettingSlider("Multi", 1, 200, 20, 0).withDesc("How many items to use per tick if on multi mode.")
 						.visibleWhen(() -> mode.getMode() == 1),
 				new SettingToggle("Throwables Only", true).withDesc("Only uses throwables.").withChildren(
 						new SettingToggle("XP Only", false).withDesc("Only uses XP bottles.")));
@@ -47,18 +38,36 @@ public class FastUse extends Module {
 
 	@BleachSubscribe
 	public void onTick(EventTick event) {
+		if (mc.player == null) return;
+
+		boolean isThrowable = THROWABLE.contains(mc.player.getMainHandStack().getItem());
+		boolean isXp = mc.player.getMainHandStack().getItem() == Items.EXPERIENCE_BOTTLE;
+
 		if (getSetting(2).asToggle().getState()) {
-			if (!(THROWABLE.contains(mc.player.getMainHandStack().getItem())
-					&& (!getSetting(2).asToggle().getChild(0).asToggle().getState() 
-							|| mc.player.getMainHandStack().getItem() == Items.EXPERIENCE_BOTTLE))) {
+			if (!(isThrowable && (!getSetting(2).asToggle().getChild(0).asToggle().getState() || isXp))) {
 				return;
 			}
 		}
 
 		mc.itemUseCooldown = 0;
-		if (getSetting(0).asMode().getMode() == 1 && mc.options.useKey.isPressed()) {
-			for (int i = 0; i < getSetting(1).asSlider().getValueInt(); i++) {
-				mc.doItemUse();
+
+		if (mc.options.useKey.isPressed()) {
+			int mode = getSetting(0).asMode().getMode();
+			int packets = mode == 1 ? getSetting(1).asSlider().getValueInt() : 1;
+
+			if (isThrowable) {
+				for (int i = 0; i < packets; i++) {
+					mc.player.networkHandler.sendPacket(new PlayerInteractItemC2SPacket(
+							Hand.MAIN_HAND,
+							0,
+							mc.player.getYaw(),
+							mc.player.getPitch()
+					));
+				}
+			} else {
+				for (int i = 0; i < packets; i++) {
+					mc.doItemUse();
+				}
 			}
 		}
 	}
