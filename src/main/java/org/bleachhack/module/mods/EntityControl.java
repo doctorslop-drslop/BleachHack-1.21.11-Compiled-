@@ -52,8 +52,8 @@ public class EntityControl extends Module {
 
 		double speed = getSetting(0).asToggle().getChild(0).asSlider().getValue();
 
-		float forward = mc.player.input.movementForward;
-		float strafe = mc.player.input.movementSideways;
+		float forward = mc.player.input.getMovementInput().y;
+		float strafe = mc.player.input.getMovementInput().x;
 		float yaw = mc.player.getYaw();
 
 		e.setYaw(yaw);
