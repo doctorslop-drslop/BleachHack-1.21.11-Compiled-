@@ -1,11 +1,3 @@
-/*
- * This file is part of the BleachHack distribution (https://github.com/BleachDev/BleachHack/).
- * Copyright (c) 2021 Bleach and contributors.
- *
- * This source code is subject to the terms of the GNU General Public
- * License, version 3. If a copy of the GPL was not distributed with this
- * file, You can obtain one at: https://www.gnu.org/licenses/gpl-3.0.txt
- */
 package org.bleachhack.module.mods;
 
 import org.bleachhack.event.events.EventEntityControl;
@@ -34,10 +26,11 @@ public class EntityControl extends Module {
 	public EntityControl() {
 		super("EntityControl", KEY_UNBOUND, ModuleCategory.MOVEMENT, "Manipulates Entities.",
 				new SettingToggle("EntitySpeed", true).withDesc("Lets you control the speed of riding entities.").withChildren(
-						new SettingSlider("Speed", 0, 5, 1.2, 2).withDesc("The speed of the entity.")),
+						new SettingSlider("Speed", 0, 20.0, 1.2, 2).withDesc("The speed of the entity.")),
 				new SettingToggle("EntityFly", false).withDesc("Lets you fly with entities.").withChildren(
-						new SettingSlider("Ascend", 0, 2, 0.3, 2).withDesc("Ascend speed."),
-						new SettingSlider("Descend", 0, 2, 0.5, 2).withDesc("Descend speed.")),
+						new SettingSlider("Ascend", 0, 10.0, 0.5, 2).withDesc("Ascend speed."),
+						new SettingSlider("Descend", 0, 10.0, 0.5, 2).withDesc("Descend speed."),
+						new SettingToggle("Hover", true).withDesc("Hovers in mid-air when not ascending/descending.")),
 				new SettingToggle("HorseJump", true).withDesc("Makes your horse always do the highest jump it can."),
 				new SettingToggle("GroundSnap", false).withDesc("Snaps the entity to the ground when going down blocks."),
 				new SettingToggle("AntiStuck", false).withDesc("Tries to prevent rubberbanding when going up blocks."),
@@ -55,10 +48,12 @@ public class EntityControl extends Module {
 			return;
 
 		Entity e = mc.player.getVehicle();
+		e.fallDistance = 0;
+
 		double speed = getSetting(0).asToggle().getChild(0).asSlider().getValue();
 
-		double forward = mc.player.forwardSpeed;
-		double strafe = mc.player.sidewaysSpeed;
+		float forward = mc.player.input.movementForward;
+		float strafe = mc.player.input.movementSideways;
 		float yaw = mc.player.getYaw();
 
 		e.setYaw(yaw);
@@ -71,33 +66,34 @@ public class EntityControl extends Module {
 		}
 
 		if (getSetting(0).asToggle().getState()) {
-			if (forward != 0.0D) {
-				if (strafe > 0.0D) {
-					yaw += (forward > 0.0D ? -45 : 45);
-				} else if (strafe < 0.0D) {
-					yaw += (forward > 0.0D ? 45 : -45);
-				}
+			double rad = Math.toRadians(yaw);
+			double sin = Math.sin(rad);
+			double cos = Math.cos(rad);
 
-				if (forward > 0.0D) {
-					forward = 1.0D;
-				} else if (forward < 0.0D) {
-					forward = -1.0D;
-				}
-
-				strafe = 0.0D;
+			double dist = Math.sqrt(forward * forward + strafe * strafe);
+			if (dist > 0) {
+				forward /= dist;
+				strafe /= dist;
 			}
 
-			e.setVelocity(forward * speed * Math.cos(Math.toRadians(yaw + 90.0F)) + strafe * speed * Math.sin(Math.toRadians(yaw + 90.0F)),
-					e.getVelocity().y,
-					forward * speed * Math.sin(Math.toRadians(yaw + 90.0F)) - strafe * speed * Math.cos(Math.toRadians(yaw + 90.0F)));
+			double velX = (forward * cos - strafe * sin) * speed;
+			double velZ = (forward * sin + strafe * cos) * speed;
+
+			e.setVelocity(velX, e.getVelocity().y, velZ);
 		}
 
 		if (getSetting(1).asToggle().getState()) {
+			double velY = 0;
 			if (mc.options.jumpKey.isPressed()) {
-				e.setVelocity(e.getVelocity().x, getSetting(1).asToggle().getChild(0).asSlider().getValue(), e.getVelocity().z);
+				velY = getSetting(1).asToggle().getChild(0).asSlider().getValue();
+			} else if (mc.options.sneakKey.isPressed()) {
+				velY = -getSetting(1).asToggle().getChild(1).asSlider().getValue();
+			} else if (getSetting(1).asToggle().getChild(2).asToggle().getState()) {
+				velY = 0;
 			} else {
-				e.setVelocity(e.getVelocity().x, -getSetting(1).asToggle().getChild(1).asSlider().getValue(), e.getVelocity().z);
+				velY = e.getVelocity().y;
 			}
+			e.setVelocity(e.getVelocity().x, velY, e.getVelocity().z);
 		}
 
 		if (getSetting(3).asToggle().getState()) {
@@ -157,6 +153,4 @@ public class EntityControl extends Module {
 
 		event.setControllable(true);
 	}
-
-	// HorseJump handled in MixinClientPlayerEntity.method_3151
 }
