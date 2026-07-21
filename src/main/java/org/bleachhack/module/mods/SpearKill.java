@@ -1,11 +1,3 @@
-/*
- * This file is part of the BleachHack distribution (https://github.com/BleachDev/BleachHack/).
- * Copyright (c) 2021 Bleach and contributors.
- *
- * This source code is subject to the terms of the GNU General Public
- * License, version 3. If a copy of the GPL was not distributed with this
- * file, You can obtain one at: https://www.gnu.org/licenses/gpl-3.0.txt
- */
 package org.bleachhack.module.mods;
 
 import org.bleachhack.BleachHack;
@@ -28,13 +20,9 @@ import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.math.Vec3d;
 
-/**
- * Ported from Trouser-Streak's SpearKill (https://github.com/etianl/Trouser-Streak). Vanilla's
- * Spear deals bonus "kinetic" damage the longer you hold high speed toward your target while
- * charging a thrust - Lunge boosts your real velocity to build that speed reliably, Blink instead
- * withholds your movement packets while charging and releases them as one large jump when close
- * enough, so the server only ever sees you already there.
- */
+import java.util.ArrayList;
+import java.util.List;
+
 public class SpearKill extends Module {
 
 	private Entity target;
@@ -44,17 +32,14 @@ public class SpearKill extends Module {
 	private boolean aboveFirstPhase;
 	private Vec3d abovePos;
 	private int blinkLungeTicks;
+	private final List<PlayerMoveC2SPacket> packetBuffer = new ArrayList<>();
 
 	public SpearKill() {
-		this(new SettingMode("Mode", "Lunge", "Blink").withDesc("How to reach charging speed. Lunge: push you toward the target with real velocity. Blink: hold your movement back, then release it all as one jump."),
+		this(new SettingMode("Mode", "Lunge", "Blink 1", "Blink 2").withDesc("How to reach charging speed. Lunge: push you toward the target with real velocity. Blink 1: Teleport-based jump. Blink 2: Packet-buffer based jump."),
 				new SettingMode("Direction", "Direct", "Above", "Auto").withDesc("Direct: lunge straight at the target. Above: lunge to a point over the target first, then stab down. Auto: try Above, but use Direct if the spot above (or the way down) is blocked."),
 				new SettingToggle("Blink+Lunge", false).withDesc("Also push you toward the target with velocity while charging in Blink mode."));
 	}
 
-	// A visibleWhen(...) predicate can't call an instance method like getSetting(0) - "this" isn't
-	// allowed yet in a super(...) argument list, even inside a lambda. Building the settings other
-	// settings react to as constructor parameters first lets the predicates below capture those
-	// local variables instead.
 	private SpearKill(SettingMode mode, SettingMode lungeDirection, SettingToggle blinkLunge) {
 		super("SpearKill", KEY_UNBOUND, ModuleCategory.EXPLOITS,
 				"Helps you reach the speed vanilla's Spear needs for a charged hit.",
@@ -76,16 +61,16 @@ public class SpearKill extends Module {
 						.visibleWhen(() -> mode.getMode() == 0 && lungeDirection.getMode() == 2),
 
 				new SettingSlider("Flush", 1, 10, 3, 1).withDesc("How close to the target before releasing your held movement.")
-						.visibleWhen(() -> mode.getMode() == 1),
-				blinkLunge.visibleWhen(() -> mode.getMode() == 1),
+						.visibleWhen(() -> mode.getMode() >= 1),
+				blinkLunge.visibleWhen(() -> mode.getMode() >= 1),
 				new SettingSlider("Lunge Delay", 1, 30, 15, 0).withDesc("How many ticks to charge before the Blink+Lunge push kicks in.")
-						.visibleWhen(() -> mode.getMode() == 1 && blinkLunge.getState()),
+						.visibleWhen(() -> mode.getMode() >= 1 && blinkLunge.getState()),
 				new SettingToggle("Raycast", true).withDesc("Only locks onto targets you can see."));
 	}
 
 	@Override
 	public void onDisable(boolean inWorld) {
-		if (charging && getSetting(0).asMode().getMode() == 1) {
+		if (charging && getSetting(0).asMode().getMode() >= 1) {
 			flush();
 		}
 
@@ -101,6 +86,7 @@ public class SpearKill extends Module {
 		aboveFirstPhase = false;
 		abovePos = null;
 		blinkLungeTicks = 0;
+		packetBuffer.clear();
 	}
 
 	@BleachSubscribe
@@ -112,7 +98,7 @@ public class SpearKill extends Module {
 		}
 
 		if (!nowCharging && charging) {
-			if (getSetting(0).asMode().getMode() == 1) {
+			if (getSetting(0).asMode().getMode() >= 1) {
 				flush();
 			}
 			reset();
@@ -144,9 +130,6 @@ public class SpearKill extends Module {
 		mc.player.setVelocity(lungeDirectionVec().multiply(getSetting(3).asSlider().getValue()));
 	}
 
-	// Straight-at-target by default; FromAbove/Auto first aim for a point above the target and
-	// only switch to a direct approach once close to that point (or, for Auto, if the above
-	// position/path turns out to be blocked).
 	private Vec3d lungeDirectionVec() {
 		Vec3d playerPos = mc.player.getEntityPos();
 		Vec3d targetCenter = target.getBoundingBox().getCenter();
@@ -208,21 +191,37 @@ public class SpearKill extends Module {
 		}
 	}
 
-	// Unlike the other three ported modules, Blink's flush doesn't need a spam-packet burst first -
-	// the original just sends the withheld start/end positions directly as one jump.
 	private void flush() {
-		if (!holdingPackets || blinkStart == null) {
+		if (!holdingPackets) {
 			return;
 		}
 
-		WorldUtils.sendTeleport(blinkStart);
-		WorldUtils.sendTeleport(mc.player.getEntityPos());
+		int mode = getSetting(0).asMode().getMode();
+
+		if (mode == 1) {
+			if (blinkStart != null) {
+				WorldUtils.sendTeleport(blinkStart);
+				WorldUtils.sendTeleport(mc.player.getEntityPos());
+			}
+		} else if (mode == 2) {
+			if (!packetBuffer.isEmpty()) {
+				for (PlayerMoveC2SPacket packet : packetBuffer) {
+					mc.player.networkHandler.sendPacket(packet);
+				}
+				packetBuffer.clear();
+			}
+		}
+
 		holdingPackets = false;
 	}
 
 	@BleachSubscribe
 	public void onSendPacket(EventPacket.Send event) {
-		if (charging && holdingPackets && getSetting(0).asMode().getMode() == 1 && event.getPacket() instanceof PlayerMoveC2SPacket) {
+		int mode = getSetting(0).asMode().getMode();
+		if (charging && holdingPackets && mode >= 1 && event.getPacket() instanceof PlayerMoveC2SPacket) {
+			if (mode == 2) {
+				packetBuffer.add((PlayerMoveC2SPacket) event.getPacket());
+			}
 			event.setCancelled(true);
 		}
 	}
@@ -258,5 +257,4 @@ public class SpearKill extends Module {
 
 		return !getSetting(12).asToggle().getState() || mc.player.canSee(e);
 	}
-
 }
