@@ -1,11 +1,3 @@
-/*
- * This file is part of the BleachHack distribution (https://github.com/BleachDev/BleachHack/).
- * Copyright (c) 2021 Bleach and contributors.
- *
- * This source code is subject to the terms of the GNU General Public
- * License, version 3. If a copy of the GPL was not distributed with this
- * file, You can obtain one at: https://www.gnu.org/licenses/gpl-3.0.txt
- */
 package org.bleachhack.mixin;
 
 import org.bleachhack.module.Module;
@@ -17,8 +9,10 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
 import net.minecraft.block.enums.CameraSubmersionType;
 
@@ -28,6 +22,7 @@ public class MixinCamera {
 	@Unique private boolean bypassCameraClip;
 
 	@Shadow private float clipToSpace(float desiredCameraDistance) { return 0; }
+	@Shadow protected void setPos(double x, double y, double z) {}
 
 	@Inject(method = "getSubmersionType", at = @At("HEAD"), cancellable = true)
 	private void getSubmergedFluidState(CallbackInfoReturnable<CameraSubmersionType> ci) {
@@ -51,6 +46,20 @@ public class MixinCamera {
 					bypassCameraClip = true;
 					info.setReturnValue(clipToSpace(betterCamera.getSetting(1).asToggle().getChild(0).asSlider().getValueFloat()));
 				}
+			}
+		}
+	}
+
+	@Inject(method = "setPos(DDD)V", at = @At("HEAD"), cancellable = true)
+	private void onSetPos(double x, double y, double z, CallbackInfo ci) {
+		if (BetterCamera.isUnderFeetEnabled()) {
+			MinecraftClient mc = MinecraftClient.getInstance();
+			if (mc.player != null && mc.player.getVehicle() == null) {
+				double feetY = mc.player.getY();
+				double offset = BetterCamera.getOffset();
+				double newY = feetY + offset;
+				this.setPos(x, newY, z);
+				ci.cancel();
 			}
 		}
 	}
